@@ -1,0 +1,20 @@
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Git
+.git/
+.gitignore
+
+# Environment variables (prevents leaking local secrets into the image)
+.env
+
+# VS Code / Dev Container
+.vscode/
+.devcontainer/

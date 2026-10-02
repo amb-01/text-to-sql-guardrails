@@ -1,57 +1,55 @@
-from sqlalchemy import create_engine, text
 import os
+import urllib.request
+from sqlalchemy import create_engine, inspect
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/ecommerce")
+CHINOOK_URL = "https://raw.githubusercontent.com/lerocha/chinook-database/master/ChinookDatabase/DataSources/Chinook_PostgreSql.sql"
 
-def init_db():
-    engine = create_engine(DATABASE_URL)
+def check_data_exists(engine) -> bool:
+    """Checks if the core Chinook tables already exist in the database."""
+    inspector = inspect(engine)
+    # Convert all returned table names to lowercase to prevent casing mismatches
+    existing_tables = [table.lower() for table in inspector.get_table_names()]
+    # Chinook uses exact casing for tables
+    return "album" in existing_tables and "artist" in existing_tables
+
+def ingest_chinook():
+    engine = create_engine(DATABASE_URL, isolation_level="AUTOCOMMIT")
     
-    schema_sql = """
-    DROP TABLE IF EXISTS orders CASCADE;
-    DROP TABLE IF EXISTS products CASCADE;
-    DROP TABLE IF EXISTS users CASCADE;
+    # --- SAFETY CHECK ---
+    if check_data_exists(engine):
+        print("✅ Chinook data already exists in the database. Skipping download and ingestion.")
+        return
+    # --------------------
 
-    CREATE TABLE users (
-        user_id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        signup_date DATE NOT NULL
-    );
-
-    CREATE TABLE products (
-        product_id SERIAL PRIMARY KEY,
-        product_name VARCHAR(150) NOT NULL,
-        category VARCHAR(50) NOT NULL,
-        price NUMERIC(10, 2) NOT NULL
-    );
-
-    CREATE TABLE orders (
-        order_id SERIAL PRIMARY KEY,
-        user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
-        product_id INT REFERENCES products(product_id) ON DELETE CASCADE,
-        order_date DATE NOT NULL,
-        quantity INT NOT NULL
-    );
-
-    INSERT INTO users (name, email, signup_date) VALUES
-    ('Alice Smith', 'alice@example.com', '2023-01-15'),
-    ('Bob Jones', 'bob@example.com', '2023-03-22'),
-    ('Charlie Brown', 'charlie@example.com', '2023-05-10');
-
-    INSERT INTO products (product_name, category, price) VALUES
-    ('Mechanical Keyboard', 'Electronics', 120.00),
-    ('Ergonomic Mouse', 'Electronics', 60.00),
-    ('Coffee Mug', 'Kitchen', 15.50);
-
-    INSERT INTO orders (user_id, product_id, order_date, quantity) VALUES
-    (1, 1, '2023-10-01', 1),
-    (1, 3, '2023-10-02', 2),
-    (2, 2, '2023-10-05', 1);
-    """
-
-    with engine.begin() as conn:
-        conn.execute(text(schema_sql))
-    print("PostgreSQL tables created and seeded successfully.")
+    print(f"Downloading Chinook SQL script from {CHINOOK_URL}...")
+    
+    req = urllib.request.Request(CHINOOK_URL, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req) as response:
+        sql_script = response.read().decode('utf-8')
+        
+    cleaned_lines = []
+    for line in sql_script.splitlines():
+        upper_line = line.strip().upper()
+        if upper_line.startswith('\\') or upper_line.startswith('DROP DATABASE') or upper_line.startswith('CREATE DATABASE'):
+            continue
+        cleaned_lines.append(line)
+        
+    clean_sql_script = "\n".join(cleaned_lines)
+    print("Download complete. Connecting to PostgreSQL container...")
+    
+    print("Ingesting tables and data. This may take 5-10 seconds...")
+    
+    conn = engine.raw_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(clean_sql_script)
+        cursor.close()
+        print("✅ Chinook database successfully ingested!")
+    except Exception as e:
+        print(f"❌ Error during ingestion: {e}")
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
-    init_db()
+    ingest_chinook()
